@@ -763,11 +763,23 @@ static int parseHuff(ljp* self) {
 #else
   /* Calculate huffman direct lut */
   // How many bits in the table - find highest entry
+  // Check bounds before accessing huffvals
+  if ((self->ix + 19) >= self->datalen) return LJ92_ERROR_CORRUPT;
   u8* huffvals = &self->data[self->ix + 19];
   int maxbits = 16;
   while (maxbits > 0) {
     if (bits[maxbits]) break;
     maxbits--;
+  }
+  
+  // Prevent excessive allocation (limit to reasonable size)
+  if (maxbits > 14) {
+    maxbits = 14;  // Limit to 2^14 entries to prevent memory exhaustion
+  }
+  
+  // Check array bounds before storing huffbits
+  if (self->num_huff_idx >= LJ92_MAX_COMPONENTS) {
+    return LJ92_ERROR_CORRUPT;
   }
   self->huffbits[self->num_huff_idx] = maxbits;
   TINY_DNG_DPRINTF("huffbuts[%d] = %d\n", self->num_huff_idx, maxbits);
@@ -776,6 +788,12 @@ static int parseHuff(ljp* self) {
   u16* hufflut = (u16*)malloc((1 << maxbits) * sizeof(u16));
   // TINY_DNG_DPRINTF("maxbits = %d\n", maxbits);
   if (hufflut == NULL) return LJ92_ERROR_NO_MEMORY;
+  
+  // Check array bounds before storing hufflut
+  if (self->num_huff_idx >= LJ92_MAX_COMPONENTS) {
+    free(hufflut);
+    return LJ92_ERROR_CORRUPT;
+  }
   self->hufflut[self->num_huff_idx] = hufflut;
   int i = 0;
   int hv = 0;
@@ -820,7 +838,7 @@ static int parseHuff(ljp* self) {
 }
 
 static int parseSof3(ljp* self) {
-  if (self->ix + 6 >= self->datalen) return LJ92_ERROR_CORRUPT;
+  if (self->ix + 7 >= self->datalen) return LJ92_ERROR_CORRUPT;
   self->y = BEH(self->data[self->ix + 3]);
   self->x = BEH(self->data[self->ix + 5]);
   self->bits = self->data[self->ix + 2];
@@ -841,6 +859,10 @@ static int parseSof3(ljp* self) {
 
 static int parseBlock(ljp* self, int marker) {
   (void)marker;
+  // Check bounds before using BEH
+  if (self->ix + 1 >= self->datalen) {
+    return LJ92_ERROR_CORRUPT;
+  }
   self->ix += BEH(self->data[self->ix]);
   if (self->ix >= self->datalen) {
     TINY_DNG_DPRINTF("parseBlock: ix %d, datalen %d\n", self->ix,
@@ -911,8 +933,8 @@ inline static int nextdiff(ljp* self, int component_idx, int Px, int *errcode) {
   diff = extend(self, diff, t);
 // TINY_DNG_DPRINTF("%d %d %d %x\n",Px+diff,Px,diff,t);//,index,usedbits);
 #else
-  if (component_idx <= self->num_huff_idx) {
-    // OK
+  if (component_idx < self->num_huff_idx) {
+    // OK - fixed off-by-one error
   } else {
     // "Invalid huff index.");
     if (errcode) {
@@ -944,6 +966,14 @@ inline static int nextdiff(ljp* self, int component_idx, int Px, int *errcode) {
   int index = b >> (cnt - huffbits);
   // TINY_DNG_DPRINTF("component_idx = %d / %d, index = %d\n", component_idx,
   // self->components, index);
+  
+  // Check index bounds before access
+  if (index < 0 || index >= (1 << huffbits)) {
+    if (errcode) {
+      (*errcode) = LJ92_ERROR_CORRUPT;
+    }
+    return 0;
+  }
 
   u16 ssssused = self->hufflut[component_idx][index];
   int usedbits = ssssused & 0xFF;
@@ -1028,10 +1058,15 @@ static int parsePred6(ljp* self) {
   Px = 1 << (self->bits - 1);
   left = Px + diff;
   left = (u16)(left % 65536);
-  if (self->linearize)
+  if (self->linearize) {
+    // Ensure we're not accessing beyond the linearize table
+    if (left > self->linlen) {
+      return LJ92_ERROR_CORRUPT;
+    }
     linear = self->linearize[left];
-  else
+  } else {
     linear = left;
+  }
   thisrow[col++] = left;
   out[c++] = linear;
   if (self->ix >= self->datalen) {
