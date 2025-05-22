@@ -213,7 +213,6 @@ struct DNGImage {
   unsigned int offset;
   short orientation;
   short _pad0;
-  int strip_byte_count;
   int jpeg_byte_count;
   short planar_configuration;  // 1: chunky, 2: planar
   short predictor;  // tag 317. 1 = no prediction, 2 = horizontal differencing,
@@ -2790,7 +2789,6 @@ static void InitializeDNGImage(tinydng::DNGImage* image) {
   image->has_as_shot_neutral = false;
 
   image->jpeg_byte_count = -1;
-  image->strip_byte_count = -1;
 
   image->samples_per_pixel = 1;
   image->rows_per_strip = -1;  // 2^32 - 1
@@ -3723,6 +3721,9 @@ static bool ParseTIFFIFD(const StreamReader& sr,
   // For delayed reading of strip offsets and strip byte counts.
   long offt_strip_offset = 0;
   long offt_strip_byte_counts = 0;
+  int type_strip_offset = 0;
+  int type_strip_byte_counts = 0;
+
 
   while (num_entries--) {
     unsigned short tag, type;
@@ -3841,6 +3842,8 @@ static bool ParseTIFFIFD(const StreamReader& sr,
       case TAG_STRIP_OFFSET:
       case TAG_JPEG_IF_OFFSET:
         offt_strip_offset = static_cast<long>(sr.tell());
+        type_strip_offset = type;
+        // Note: in case of TAG_STRIP_OFFSET, the parsing of the table will be done later
         if (!sr.read4(&image.offset)) {
           if (err) {
             (*err) += "Failed to parse Compression Tag.\n";
@@ -3870,13 +3873,8 @@ static bool ParseTIFFIFD(const StreamReader& sr,
 
       case TAG_STRIP_BYTE_COUNTS:
         offt_strip_byte_counts = static_cast<long>(sr.tell());
-        if (!sr.read4(&image.strip_byte_count)) {
-          if (err) {
-            (*err) = "Failed to parse StripByteCount Tag.\n";
-          }
-          return false;
-        }
-        TINY_DNG_DPRINTF("strip_byte_count = %d\n", image.strip_byte_count);
+        type_strip_byte_counts = type;
+        // The table will be parsed later
         break;
 
       case TAG_PLANAR_CONFIGURATION:
@@ -4597,7 +4595,7 @@ static bool ParseTIFFIFD(const StreamReader& sr,
 
       for (int k = 0; k < image.strips_per_image; k++) {
         unsigned int strip_byte_count;
-        if (!sr.read4(&strip_byte_count)) {
+        if (!sr.read_uint(type_strip_byte_counts, &strip_byte_count)) {
           if (err) {
             (*err) += "Failed to read StripByteCount value.\n";
           }
@@ -4618,7 +4616,7 @@ static bool ParseTIFFIFD(const StreamReader& sr,
 
       for (int k = 0; k < image.strips_per_image; k++) {
         unsigned int strip_offset;
-        if (!sr.read4(&strip_offset)) {
+        if (!sr.read_uint(type_strip_offset, &strip_offset)) {
           if (err) {
             (*err) += "Failed to read StripOffset value.\n";
           }
