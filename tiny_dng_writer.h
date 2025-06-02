@@ -146,7 +146,7 @@ class DNGImage {
   /// Optional: Explicitly specify endian.
   /// Must be called before calling other Set methods.
   ///
-  void SetBigEndian(bool big_endian);
+  void SetBigEndian(bool dng_swap_to_big_endian);
 
   ///
   /// Default = 0
@@ -276,6 +276,7 @@ class DNGImage {
   std::ostringstream data_os_;
   bool swap_endian_;
   bool dng_big_endian_;
+  bool dng_swap_to_big_endian_;
   unsigned short num_fields_;
   unsigned int samples_per_pixels_;
   std::vector<unsigned short> bits_per_samples_;
@@ -311,9 +312,16 @@ class DNGWriter {
   /// Returns true upon success.
   bool WriteToFile(const char *filename, std::string *err) const;
 
+  /// Write DNG to memory.
+  /// Returns allocated memory pointer. Caller is responsible for freeing the memory using free().
+  /// Return error string to `err` when WriteToMemory() returns nullptr.
+  /// Sets `size` to the size of allocated memory upon success.
+  /// Returns nullptr upon failure.
+  void* WriteToMemory(size_t *size, std::string *err) const;
  private:
   bool swap_endian_;
   bool dng_big_endian_;  // Endianness of DNG file.
+  bool dng_swap_to_big_endian_;  // Swap to big endian when writing DNG file.
 
   std::vector<const DNGImage *> images_;
 };
@@ -1025,10 +1033,10 @@ static int DoubleToRational(double x, double *numerator, double *denominator) {
 }
 
 static inline bool IsBigEndian() {
-  unsigned int i = 0x01020304;
-  char c[4];
-  memcpy(c, &i, 4);
-  return (c[0] == 1);
+  const int value = 0x01;
+  const void * address = static_cast<const void *>(&value);
+  const unsigned char * least_significant_address = static_cast<const unsigned char *>(address);
+  return !(*least_significant_address == 0x01);
 }
 
 static void swap2(unsigned short *val) {
@@ -1094,7 +1102,7 @@ static void Write4(const unsigned int c, std::ostringstream *out,
 static bool WriteTIFFTag(const unsigned short tag, const unsigned short type,
                          const unsigned int count, const unsigned char *data,
                          std::vector<IFDTag> *tags_out,
-                         std::ostringstream *data_out) {
+                         std::ostringstream *data_out, bool swap_endian = false) {
   assert(sizeof(IFDTag) ==
          12);  // FIXME(syoyo): Use static_assert for C++11 compiler
 
@@ -1130,9 +1138,15 @@ static bool WriteTIFFTag(const unsigned short tag, const unsigned short type,
       memcpy(&(ifd.offset_or_value), &value, sizeof(unsigned char));
     } else if (len == 2) {
       unsigned short value = *(reinterpret_cast<const unsigned short *>(data));
+      if (swap_endian) {
+        swap2(&value);
+      }
       memcpy(&(ifd.offset_or_value), &value, sizeof(unsigned short));
     } else if (len == 4) {
       unsigned int value = *(reinterpret_cast<const unsigned int *>(data));
+      if (swap_endian) {
+        swap4(&value);
+      }
       ifd.offset_or_value = value;
     } else {
       assert(0);
@@ -1164,17 +1178,29 @@ static bool WriteTIFFVersionHeader(std::ostringstream *out, bool big_endian) {
 }
 
 DNGImage::DNGImage()
-    : dng_big_endian_(true),
+    : dng_swap_to_big_endian_(true),
       num_fields_(0),
       samples_per_pixels_(0),
       data_strip_offset_{0},
       data_strip_bytes_{0} {
-  swap_endian_ = (IsBigEndian() != dng_big_endian_);
+  if (dng_swap_to_big_endian_) {
+    swap_endian_ = !IsBigEndian();
+    dng_big_endian_ = true;
+  } else {
+    swap_endian_ = false;
+    dng_big_endian_ = IsBigEndian();
+  }
 }
 
-void DNGImage::SetBigEndian(bool big_endian) {
-  dng_big_endian_ = big_endian;
-  swap_endian_ = (IsBigEndian() != dng_big_endian_);
+void DNGImage::SetBigEndian(bool swap_to_big_endian) {
+  dng_swap_to_big_endian_ = swap_to_big_endian;
+  if (dng_swap_to_big_endian_) {
+    swap_endian_ = !IsBigEndian();
+    dng_big_endian_ = true;
+  } else {
+    swap_endian_ = false;
+    dng_big_endian_ = IsBigEndian();
+  }
 }
 
 bool DNGImage::SetSubfileType(bool reduced_image, bool page, bool mask) {
@@ -1318,11 +1344,6 @@ bool DNGImage::SetBitsPerSample(const unsigned int num_samples,
     }
 
     vs[i] = values[i];
-
-    // TODO(syoyo): Swap values when writing IFD tag, not here.
-    if (swap_endian_) {
-      swap2(&vs[i]);
-    }
   }
 
   unsigned int count = num_samples;
@@ -1439,11 +1460,6 @@ bool DNGImage::SetSampleFormat(const unsigned int num_samples,
     }
 
     vs[i] = values[i];
-
-    // TODO(syoyo): Swap values when writing IFD tag, not here.
-    if (swap_endian_) {
-      swap2(&vs[i]);
-    }
   }
 
   unsigned int count = num_samples;
@@ -1520,12 +1536,6 @@ bool DNGImage::SetBlackLevelRational(unsigned int num_samples,
 
     vs[2 * i + 0] = static_cast<unsigned int>(numerator);
     vs[2 * i + 1] = static_cast<unsigned int>(denominator);
-
-    // TODO(syoyo): Swap rational value(8 bytes) when writing IFD tag, not here.
-    if (swap_endian_) {
-      swap4(&vs[2 * i + 0]);
-      swap4(&vs[2 * i + 1]);
-    }
   }
 
   unsigned int count = num_samples;
@@ -1563,12 +1573,6 @@ bool DNGImage::SetWhiteLevelRational(unsigned int num_samples,
 
     vs[2 * i + 0] = static_cast<unsigned int>(numerator);
     vs[2 * i + 1] = static_cast<unsigned int>(denominator);
-
-    // TODO(syoyo): Swap rational value(8 bytes) when writing IFD tag, not here.
-    if (swap_endian_) {
-      swap4(&vs[2 * i + 0]);
-      swap4(&vs[2 * i + 1]);
-    }
   }
 
   unsigned int count = num_samples;
@@ -1597,12 +1601,6 @@ bool DNGImage::SetXResolution(const double value) {
   data[0] = static_cast<unsigned int>(numerator);
   data[1] = static_cast<unsigned int>(denominator);
 
-  // TODO(syoyo): Swap rational value(8 bytes) when writing IFD tag, not here.
-  if (swap_endian_) {
-    swap4(&data[0]);
-    swap4(&data[1]);
-  }
-
   bool ret = WriteTIFFTag(
       static_cast<unsigned short>(TIFFTAG_XRESOLUTION), TIFF_RATIONAL, 1,
       reinterpret_cast<const unsigned char *>(data), &ifd_tags_, &data_os_);
@@ -1625,12 +1623,6 @@ bool DNGImage::SetYResolution(const double value) {
   unsigned int data[2];
   data[0] = static_cast<unsigned int>(numerator);
   data[1] = static_cast<unsigned int>(denominator);
-
-  // TODO(syoyo): Swap rational value(8 bytes) when writing IFD tag, not here.
-  if (swap_endian_) {
-    swap4(&data[0]);
-    swap4(&data[1]);
-  }
 
   bool ret = WriteTIFFTag(
       static_cast<unsigned short>(TIFFTAG_YRESOLUTION), TIFF_RATIONAL, 1,
@@ -1796,12 +1788,6 @@ bool DNGImage::SetColorMatrix1(const unsigned int plane_count,
 
     vs[2 * i + 0] = static_cast<unsigned int>(numerator);
     vs[2 * i + 1] = static_cast<unsigned int>(denominator);
-
-    // TODO(syoyo): Swap rational value(8 bytes) when writing IFD tag, not here.
-    if (swap_endian_) {
-      swap4(&vs[2 * i + 0]);
-      swap4(&vs[2 * i + 1]);
-    }
   }
   bool ret = WriteTIFFTag(static_cast<unsigned short>(TIFFTAG_COLOR_MATRIX1),
                           TIFF_SRATIONAL, uint32_t(vs.size() / 2),
@@ -1828,12 +1814,6 @@ bool DNGImage::SetColorMatrix2(const unsigned int plane_count,
 
     vs[2 * i + 0] = static_cast<unsigned int>(numerator);
     vs[2 * i + 1] = static_cast<unsigned int>(denominator);
-
-    // TODO(syoyo): Swap rational value(8 bytes) when writing IFD tag, not here.
-    if (swap_endian_) {
-      swap4(&vs[2 * i + 0]);
-      swap4(&vs[2 * i + 1]);
-    }
   }
   bool ret = WriteTIFFTag(static_cast<unsigned short>(TIFFTAG_COLOR_MATRIX2),
                           TIFF_SRATIONAL, uint32_t(vs.size() / 2),
@@ -1860,12 +1840,6 @@ bool DNGImage::SetForwardMatrix1(const unsigned int plane_count,
 
     vs[2 * i + 0] = static_cast<unsigned int>(numerator);
     vs[2 * i + 1] = static_cast<unsigned int>(denominator);
-
-    // TODO(syoyo): Swap rational value(8 bytes) when writing IFD tag, not here.
-    if (swap_endian_) {
-      swap4(&vs[2 * i + 0]);
-      swap4(&vs[2 * i + 1]);
-    }
   }
   bool ret = WriteTIFFTag(static_cast<unsigned short>(TIFFTAG_FORWARD_MATRIX1),
                           TIFF_SRATIONAL, uint32_t(vs.size() / 2),
@@ -1892,12 +1866,6 @@ bool DNGImage::SetForwardMatrix2(const unsigned int plane_count,
 
     vs[2 * i + 0] = static_cast<unsigned int>(numerator);
     vs[2 * i + 1] = static_cast<unsigned int>(denominator);
-
-    // TODO(syoyo): Swap rational value(8 bytes) when writing IFD tag, not here.
-    if (swap_endian_) {
-      swap4(&vs[2 * i + 0]);
-      swap4(&vs[2 * i + 1]);
-    }
   }
   bool ret = WriteTIFFTag(static_cast<unsigned short>(TIFFTAG_FORWARD_MATRIX2),
                           TIFF_SRATIONAL, uint32_t(vs.size() / 2),
@@ -1988,12 +1956,6 @@ bool DNGImage::SetAnalogBalance(const unsigned int plane_count,
 
     vs[2 * i + 0] = static_cast<unsigned int>(numerator);
     vs[2 * i + 1] = static_cast<unsigned int>(denominator);
-
-    // TODO(syoyo): Swap rational value(8 bytes) when writing IFD tag, not here.
-    if (swap_endian_) {
-      swap4(&vs[2 * i + 0]);
-      swap4(&vs[2 * i + 1]);
-    }
   }
   bool ret = WriteTIFFTag(static_cast<unsigned short>(TIFFTAG_ANALOG_BALANCE),
                           TIFF_RATIONAL, uint32_t(vs.size() / 2),
@@ -2101,12 +2063,6 @@ bool DNGImage::SetAsShotNeutral(const unsigned int plane_count,
 
     vs[2 * i + 0] = static_cast<unsigned int>(numerator);
     vs[2 * i + 1] = static_cast<unsigned int>(denominator);
-
-    // TODO(syoyo): Swap rational value(8 bytes) when writing IFD tag, not here.
-    if (swap_endian_) {
-      swap4(&vs[2 * i + 0]);
-      swap4(&vs[2 * i + 1]);
-    }
   }
   bool ret = WriteTIFFTag(static_cast<unsigned short>(TIFFTAG_AS_SHOT_NEUTRAL),
                           TIFF_RATIONAL, uint32_t(vs.size() / 2),
@@ -2133,12 +2089,6 @@ bool DNGImage::SetAsShotWhiteXY(const double x, const double y) {
 
     vs[2 * i + 0] = static_cast<unsigned int>(numerator);
     vs[2 * i + 1] = static_cast<unsigned int>(denominator);
-
-    // TODO(syoyo): Swap rational value(8 bytes) when writing IFD tag, not here.
-    if (swap_endian_) {
-      swap4(&vs[2 * i + 0]);
-      swap4(&vs[2 * i + 1]);
-    }
   }
   bool ret = WriteTIFFTag(static_cast<unsigned short>(TIFFTAG_AS_SHOT_WHITE_XY),
                           TIFF_RATIONAL, uint32_t(vs.size() / 2),
@@ -2468,8 +2418,14 @@ bool DNGImage::WriteIFDToStream(const unsigned int data_base_offset,
 
 // -------------------------------------------
 
-DNGWriter::DNGWriter(bool big_endian) : dng_big_endian_(big_endian) {
-  swap_endian_ = (IsBigEndian() != dng_big_endian_);
+DNGWriter::DNGWriter(bool swap_to_big_endian) : dng_swap_to_big_endian_(swap_to_big_endian) {
+  if (dng_swap_to_big_endian_) {
+    swap_endian_ = !IsBigEndian();
+    dng_big_endian_ = true;
+  } else {
+    swap_endian_ = false;
+    dng_big_endian_ = IsBigEndian();
+  }
 }
 
 bool DNGWriter::WriteToFile(const char *filename, std::string *err) const {
@@ -2572,6 +2528,111 @@ bool DNGWriter::WriteToFile(const char *filename, std::string *err) const {
   }
 
   return true;
+}
+
+
+/// Write DNG to memory.
+/// Returns allocated memory pointer. Caller is responsible for freeing the memory using free().
+/// Return error string to `err` when WriteToMemory() returns nullptr.
+/// Sets `size` to the size of allocated memory upon success.
+/// Returns nullptr upon failure.
+void* DNGWriter::WriteToMemory(size_t *size, std::string *err) const {
+  std::ostringstream header;
+  bool ret = WriteTIFFVersionHeader(&header, dng_big_endian_);
+  if (!ret) {
+    if (err) {
+      (*err) = "Failed to write TIFF version header.\n";
+    }
+    return nullptr;
+  }
+
+  if (images_.size() == 0) {
+    if (err) {
+      (*err) = "No image added for writing.\n";
+    }
+    return nullptr;
+  }
+
+  // 1. Compute offset and data size(exclude TIFF header bytes)
+  size_t data_len = 0;
+  size_t strip_offset = 0;
+  std::vector<size_t> data_offset_table;
+  std::vector<size_t> strip_offset_table;
+  for (size_t i = 0; i < images_.size(); i++) {
+    strip_offset = data_len + images_[i]->GetStripOffset();
+    data_offset_table.push_back(data_len);
+    strip_offset_table.push_back(strip_offset);
+    data_len += images_[i]->GetDataSize();
+  }
+
+  // 2. Write offset to ifd table.
+  const unsigned int ifd_offset =
+      kHeaderSize + static_cast<unsigned int>(data_len);
+  Write4(ifd_offset, &header, swap_endian_);
+
+  assert(header.str().length() == 8);
+
+  // 3. Write header
+  std::ostringstream oss;
+  oss.write(header.str().c_str(), static_cast<std::streamsize>(header.str().length()));
+
+  // 4. Write image and meta data
+  // TODO(syoyo): Write IFD first, then image/meta data
+  for (size_t i = 0; i < images_.size(); i++) {
+    bool ok = images_[i]->WriteDataToStream(&oss);
+    if (!ok) {
+      if (err) {
+        std::stringstream ss;
+        ss << "Failed to write data at image[" << i << "]. err = " << images_[i]->Error() << "\n";
+        (*err) += ss.str();
+      }
+      return nullptr;
+    }
+  }
+
+  // 5. Write IFD entries;
+  for (size_t i = 0; i < images_.size(); i++) {
+    bool ok = images_[i]->WriteIFDToStream(
+        static_cast<unsigned int>(data_offset_table[i]),
+        static_cast<unsigned int>(strip_offset_table[i]), &oss);
+    if (!ok) {
+      if (err) {
+        std::stringstream ss;
+        ss << "Failed to write IFD at image[" << i << "]. err = " << images_[i]->Error() << "\n";
+        (*err) += ss.str();
+      }
+      return nullptr;
+    }
+
+    unsigned int next_ifd_offset =
+        static_cast<unsigned int>(oss.tellp()) + sizeof(unsigned int);
+
+    if (i == (images_.size() - 1)) {
+      // Write zero as IFD offset(= end of data)
+      next_ifd_offset = 0;
+    }
+
+    if (swap_endian_) {
+      swap4(&next_ifd_offset);
+    }
+
+    oss.write(reinterpret_cast<const char *>(&next_ifd_offset), 4);
+  }
+
+  // 6. Allocate memory and copy data
+  std::string buffer = oss.str();
+  *size = buffer.size();
+
+  void* memory = malloc(*size);
+  if (memory == nullptr) {
+    if (err) {
+      (*err) = "Failed to allocate memory.\n";
+    }
+    return nullptr;
+  }
+
+  memcpy(memory, buffer.data(), *size);
+  return memory;
 }
 
 #ifdef __clang__
