@@ -1778,7 +1778,7 @@ bool DNGImage::SetDNGVersion(const unsigned char a,
 
 bool DNGImage::SetColorMatrix1(const unsigned int plane_count,
                                const double *matrix_values) {
-  std::vector<unsigned int> vs(plane_count * 3 * 2);
+  std::vector<int> vs(plane_count * 3 * 2);
   for (size_t i = 0; i * 2 < vs.size(); i++) {
     double numerator, denominator;
     if (DoubleToRational(matrix_values[i], &numerator, &denominator) != 0) {
@@ -1786,8 +1786,8 @@ bool DNGImage::SetColorMatrix1(const unsigned int plane_count,
       return false;
     }
 
-    vs[2 * i + 0] = static_cast<unsigned int>(numerator);
-    vs[2 * i + 1] = static_cast<unsigned int>(denominator);
+    vs[2 * i + 0] = static_cast<int>(numerator);
+    vs[2 * i + 1] = static_cast<int>(denominator);
   }
   bool ret = WriteTIFFTag(static_cast<unsigned short>(TIFFTAG_COLOR_MATRIX1),
                           TIFF_SRATIONAL, uint32_t(vs.size() / 2),
@@ -1804,7 +1804,7 @@ bool DNGImage::SetColorMatrix1(const unsigned int plane_count,
 
 bool DNGImage::SetColorMatrix2(const unsigned int plane_count,
                                const double *matrix_values) {
-  std::vector<unsigned int> vs(plane_count * 3 * 2);
+  std::vector<int> vs(plane_count * 3 * 2);
   for (size_t i = 0; i * 2 < vs.size(); i++) {
     double numerator, denominator;
     if (DoubleToRational(matrix_values[i], &numerator, &denominator) != 0) {
@@ -1812,8 +1812,8 @@ bool DNGImage::SetColorMatrix2(const unsigned int plane_count,
       return false;
     }
 
-    vs[2 * i + 0] = static_cast<unsigned int>(numerator);
-    vs[2 * i + 1] = static_cast<unsigned int>(denominator);
+    vs[2 * i + 0] = static_cast<int>(numerator);
+    vs[2 * i + 1] = static_cast<int>(denominator);
   }
   bool ret = WriteTIFFTag(static_cast<unsigned short>(TIFFTAG_COLOR_MATRIX2),
                           TIFF_SRATIONAL, uint32_t(vs.size() / 2),
@@ -1830,7 +1830,7 @@ bool DNGImage::SetColorMatrix2(const unsigned int plane_count,
 
 bool DNGImage::SetForwardMatrix1(const unsigned int plane_count,
                                  const double *matrix_values) {
-  std::vector<unsigned int> vs(plane_count * 3 * 2);
+  std::vector<int> vs(plane_count * 3 * 2);
   for (size_t i = 0; i * 2 < vs.size(); i++) {
     double numerator, denominator;
     if (DoubleToRational(matrix_values[i], &numerator, &denominator) != 0) {
@@ -1838,8 +1838,8 @@ bool DNGImage::SetForwardMatrix1(const unsigned int plane_count,
       return false;
     }
 
-    vs[2 * i + 0] = static_cast<unsigned int>(numerator);
-    vs[2 * i + 1] = static_cast<unsigned int>(denominator);
+    vs[2 * i + 0] = static_cast<int>(numerator);
+    vs[2 * i + 1] = static_cast<int>(denominator);
   }
   bool ret = WriteTIFFTag(static_cast<unsigned short>(TIFFTAG_FORWARD_MATRIX1),
                           TIFF_SRATIONAL, uint32_t(vs.size() / 2),
@@ -1856,7 +1856,7 @@ bool DNGImage::SetForwardMatrix1(const unsigned int plane_count,
 
 bool DNGImage::SetForwardMatrix2(const unsigned int plane_count,
                                  const double *matrix_values) {
-  std::vector<unsigned int> vs(plane_count * 3 * 2);
+  std::vector<int> vs(plane_count * 3 * 2);
   for (size_t i = 0; i * 2 < vs.size(); i++) {
     double numerator, denominator;
     if (DoubleToRational(matrix_values[i], &numerator, &denominator) != 0) {
@@ -1864,8 +1864,8 @@ bool DNGImage::SetForwardMatrix2(const unsigned int plane_count,
       return false;
     }
 
-    vs[2 * i + 0] = static_cast<unsigned int>(numerator);
-    vs[2 * i + 1] = static_cast<unsigned int>(denominator);
+    vs[2 * i + 0] = static_cast<int>(numerator);
+    vs[2 * i + 1] = static_cast<int>(denominator);
   }
   bool ret = WriteTIFFTag(static_cast<unsigned short>(TIFFTAG_FORWARD_MATRIX2),
                           TIFF_SRATIONAL, uint32_t(vs.size() / 2),
@@ -1882,7 +1882,7 @@ bool DNGImage::SetForwardMatrix2(const unsigned int plane_count,
 
 bool DNGImage::SetCameraCalibration1(const unsigned int plane_count,
                                      const double *matrix_values) {
-  std::vector<unsigned int> vs(plane_count * plane_count * 2);
+  std::vector<int> vs(plane_count * plane_count * 2);
   for (size_t i = 0; i * 2 < vs.size(); i++) {
     double numerator, denominator;
     if (DoubleToRational(matrix_values[i], &numerator, &denominator) != 0) {
@@ -1890,14 +1890,8 @@ bool DNGImage::SetCameraCalibration1(const unsigned int plane_count,
       return false;
     }
 
-    vs[2 * i + 0] = static_cast<unsigned int>(numerator);
-    vs[2 * i + 1] = static_cast<unsigned int>(denominator);
-
-    // TODO(syoyo): Swap rational value(8 bytes) when writing IFD tag, not here.
-    if (swap_endian_) {
-      swap4(&vs[2 * i + 0]);
-      swap4(&vs[2 * i + 1]);
-    }
+    vs[2 * i + 0] = static_cast<int>(numerator);
+    vs[2 * i + 1] = static_cast<int>(denominator);
   }
   bool ret = WriteTIFFTag(static_cast<unsigned short>(TIFFTAG_CAMERA_CALIBRATION1),
                           TIFF_SRATIONAL, uint32_t(vs.size() / 2),
@@ -1914,7 +1908,7 @@ bool DNGImage::SetCameraCalibration1(const unsigned int plane_count,
 
 bool DNGImage::SetCameraCalibration2(const unsigned int plane_count,
                                      const double *matrix_values) {
-  std::vector<unsigned int> vs(plane_count * plane_count * 2);
+  std::vector<int> vs(plane_count * plane_count * 2);
   for (size_t i = 0; i * 2 < vs.size(); i++) {
     double numerator, denominator;
     if (DoubleToRational(matrix_values[i], &numerator, &denominator) != 0) {
@@ -1922,14 +1916,8 @@ bool DNGImage::SetCameraCalibration2(const unsigned int plane_count,
       return false;
     }
 
-    vs[2 * i + 0] = static_cast<unsigned int>(numerator);
-    vs[2 * i + 1] = static_cast<unsigned int>(denominator);
-
-    // TODO(syoyo): Swap rational value(8 bytes) when writing IFD tag, not here.
-    if (swap_endian_) {
-      swap4(&vs[2 * i + 0]);
-      swap4(&vs[2 * i + 1]);
-    }
+    vs[2 * i + 0] = static_cast<int>(numerator);
+    vs[2 * i + 1] = static_cast<int>(denominator);
   }
   bool ret = WriteTIFFTag(static_cast<unsigned short>(TIFFTAG_CAMERA_CALIBRATION2),
                           TIFF_SRATIONAL, uint32_t(vs.size() / 2),
