@@ -84,7 +84,12 @@ typedef enum {
   TIFFTAG_DEFAULT_BLACK_RENDER = 51110,
   TIFFTAG_ACTIVE_AREA = 50829,
   TIFFTAG_FORWARD_MATRIX1 = 50964,
-  TIFFTAG_FORWARD_MATRIX2 = 50965
+  TIFFTAG_FORWARD_MATRIX2 = 50965,
+
+  // OpCode List tags
+  TIFFTAG_OPCODE_LIST1 = 0xc740,
+  TIFFTAG_OPCODE_LIST2 = 0xc741,
+  TIFFTAG_OPCODE_LIST3 = 0xc742
 } Tag;
 
 // SUBFILETYPE(bit field)
@@ -136,6 +141,57 @@ struct IFDTag {
   unsigned int offset_or_value;
 };
 // 12 bytes.
+
+// OpCode IDs
+static const int OPCODE_GAIN_MAP = 9;  // Gain map opcode
+
+struct OpCodeItem {
+    int opcodeid;
+    int dngversion;
+    int qualityprocessing;
+    int size_of_bytes;
+};
+
+// GainMap structure for opcode list
+struct GainMap {
+    unsigned int top, left, bottom, right;
+    unsigned int plane, planes;
+    unsigned int row_pitch, col_pitch;
+    unsigned int map_points_v, map_points_h;
+    double map_spacing_v, map_spacing_h;
+    double map_origin_v, map_origin_h;
+    unsigned int map_planes;
+    std::vector<float> pixels; // size = map_points_v * map_points_h * map_planes
+
+    GainMap() {
+        top = left = bottom = right = 0;
+        plane = planes = 0;
+        row_pitch = col_pitch = 0;
+        map_points_v = map_points_h = 0;
+        map_spacing_v = map_spacing_h = 0.0;
+        map_origin_v = map_origin_h = 0.0;
+        map_planes = 0;
+    }
+    GainMap(const float* data, int width, int height, int xmin, int ymin, int xmax, int ymax, int pattern = 2) {
+        top = ymin;
+        left = xmin;
+        bottom = ymax;
+        right = xmax;
+        plane = 0;
+        planes = 1;
+        row_pitch = pattern;
+        col_pitch = pattern;
+        map_points_v = height;
+        map_points_h = width;
+        map_spacing_v = 1.0 / height;
+        map_spacing_h = 1.0 / width;;
+        map_origin_v = 0.0;
+        map_origin_h = 0.0;
+        map_planes = 1;
+        pixels.assign(data, data + width * height);
+    }
+};
+
 
 class DNGImage {
  public:
@@ -238,6 +294,8 @@ class DNGImage {
   /// Specify the the selected white balance at time of capture, encoded as x-y chromaticity coordinates.
   bool SetAsShotWhiteXY(const double x, const double y);
 
+  bool SetGainMap(std::vector<GainMap> &gain_maps);
+
   /// Set image data with packing (take 16-bit values and pack them to input_bpp values).
   bool SetImageDataPacked(const unsigned short *input_buffer, const int input_count, const unsigned int input_bpp, bool big_endian);
 
@@ -273,6 +331,7 @@ class DNGImage {
   std::string Error() const { return err_; }
 
  private:
+  int dng_version_;
   std::ostringstream data_os_;
   bool swap_endian_;
   bool dng_big_endian_;
@@ -318,7 +377,7 @@ class DNGWriter {
   /// Sets `size` to the size of allocated memory upon success.
   /// Returns nullptr upon failure.
   void* WriteToMemory(size_t *size, std::string *err) const;
- private:
+private:
   bool swap_endian_;
   bool dng_big_endian_;  // Endianness of DNG file.
   bool dng_swap_to_big_endian_;  // Swap to big endian when writing DNG file.
@@ -1099,6 +1158,55 @@ static void Write4(const unsigned int c, std::ostringstream *out,
   out->write(reinterpret_cast<const char *>(&value), 4);
 }
 
+static void WriteOpCodeItem(const OpCodeItem &opcode_item, std::ostringstream *out, bool swap_endian = false) {
+  Write4(opcode_item.opcodeid, out, swap_endian);
+  Write4(opcode_item.dngversion, out, swap_endian);
+  Write4(opcode_item.qualityprocessing, out, swap_endian);
+  Write4(opcode_item.size_of_bytes, out, swap_endian);
+}
+
+static void WriteGainMap(const GainMap &gain_map, std::ostringstream *out, bool swap_endian = false) {
+  Write4(gain_map.top, out, swap_endian);
+  Write4(gain_map.left, out, swap_endian);
+  Write4(gain_map.right, out, swap_endian);
+  Write4(gain_map.bottom, out, swap_endian);
+
+  Write4(gain_map.plane, out, swap_endian);
+  Write4(gain_map.planes, out, swap_endian);
+  Write4(gain_map.row_pitch, out, swap_endian);
+  Write4(gain_map.col_pitch, out, swap_endian);
+  Write4(gain_map.map_points_v, out, swap_endian);
+  Write4(gain_map.map_points_h, out, swap_endian);
+
+  // Write double values as binary data (8 bytes each)
+  double spacing_v = gain_map.map_spacing_v;
+  double spacing_h = gain_map.map_spacing_h;
+  double origin_v = gain_map.map_origin_v;
+  double origin_h = gain_map.map_origin_h;
+
+  if (swap_endian) {
+    swap8(reinterpret_cast<uint64_t*>(&spacing_v));
+    swap8(reinterpret_cast<uint64_t*>(&spacing_h));
+    swap8(reinterpret_cast<uint64_t*>(&origin_v));
+    swap8(reinterpret_cast<uint64_t*>(&origin_h));
+  }
+
+  out->write(reinterpret_cast<const char*>(&spacing_v), sizeof(double));
+  out->write(reinterpret_cast<const char*>(&spacing_h), sizeof(double));
+  out->write(reinterpret_cast<const char*>(&origin_v), sizeof(double));
+  out->write(reinterpret_cast<const char*>(&origin_h), sizeof(double));
+
+  Write4(gain_map.map_planes, out, swap_endian);
+  for(int i =0; i<gain_map.pixels.size(); i++){
+      float val = gain_map.pixels[i];
+      if (swap_endian) {
+          swap4(reinterpret_cast<uint32_t*>(&val));
+      }
+        out->write(reinterpret_cast<const char*>(&val), sizeof(float));
+  }
+  //out->write(reinterpret_cast<const char *>(gain_map.pixels.data()), gain_map.pixels.size() * sizeof(float));
+}
+
 static bool WriteTIFFTag(const unsigned short tag, const unsigned short type,
                          const unsigned int count, const unsigned char *data,
                          std::vector<IFDTag> *tags_out,
@@ -1768,6 +1876,8 @@ bool DNGImage::SetDNGVersion(const unsigned char a,
       reinterpret_cast<const unsigned char *>(data),
       &ifd_tags_, &data_os_);
 
+  dng_version_ = reinterpret_cast<const int*>(data)[0];
+
   if (!ret) {
     return false;
   }
@@ -2082,6 +2192,59 @@ bool DNGImage::SetAsShotWhiteXY(const double x, const double y) {
                           TIFF_RATIONAL, uint32_t(vs.size() / 2),
                           reinterpret_cast<const unsigned char *>(vs.data()),
                           &ifd_tags_, &data_os_);
+
+  if (!ret) {
+    return false;
+  }
+
+  num_fields_++;
+  return true;
+}
+
+bool DNGImage::SetGainMap(std::vector<GainMap> &gain_maps) {
+  if (gain_maps.empty() || dng_version_ == 0) {
+    return false;  // No gain maps to write or dng version not set
+  }
+
+  // Create opcode list structure
+  std::ostringstream opcode_stream;
+
+  // Write number of opcodes (always 1 for gain map)
+  const unsigned int num_opcodes = static_cast<unsigned int>(gain_maps.size());
+  Write4(num_opcodes, &opcode_stream, true);
+
+  for (const auto& gain_map : gain_maps) {
+    // Calculate the size of the gain map data
+    // Size = 10 uint32 fields (40 bytes) + 4 double fields (32 bytes) + 1 uint32 plane count + pixel data
+    const size_t pixel_data_size = gain_map.pixels.size() * sizeof(float);
+    const unsigned int opcode_data_size = static_cast<unsigned int>(
+        11 * sizeof(unsigned int) + 4 * sizeof(double) + pixel_data_size);
+
+    // Create opcode item
+    OpCodeItem opcode_item;
+    opcode_item.opcodeid = OPCODE_GAIN_MAP;
+    opcode_item.dngversion = dng_version_;
+    opcode_item.qualityprocessing = 1;
+    opcode_item.size_of_bytes = static_cast<int>(opcode_data_size);
+
+    // Write opcode item header
+    WriteOpCodeItem(opcode_item, &opcode_stream, true);
+
+    // Write gain map data
+    WriteGainMap(gain_map, &opcode_stream, true);
+  }
+
+  // Get the opcode data
+  std::string opcode_data = opcode_stream.str();
+
+  // Write as OpCodeList2 tag
+  bool ret = WriteTIFFTag(
+      static_cast<unsigned short>(TIFFTAG_OPCODE_LIST2),
+      TIFF_UNDEFINED,
+      static_cast<unsigned int>(opcode_data.size()),
+      reinterpret_cast<const unsigned char *>(opcode_data.data()),
+      &ifd_tags_,
+      &data_os_);
 
   if (!ret) {
     return false;
