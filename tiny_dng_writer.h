@@ -62,6 +62,9 @@ typedef enum {
   TIFFTAG_CFA_REPEAT_PATTERN_DIM = 33421,
   TIFFTAG_CFA_PATTERN = 33422,
 
+  TIFFTAG_CAMERA_EXPOSURE_TIME = 33434,
+  TIFFTAG_CAMERA_ISO = 34855,
+
   TIFFTAG_DNG_VERSION = 50706,
   TIFFTAG_DNG_BACKWARD_VERSION = 50707,
   TIFFTAG_UNIQUE_CAMERA_MODEL = 50708,
@@ -85,6 +88,10 @@ typedef enum {
   TIFFTAG_ACTIVE_AREA = 50829,
   TIFFTAG_FORWARD_MATRIX1 = 50964,
   TIFFTAG_FORWARD_MATRIX2 = 50965,
+
+  // CinemaDNG specific
+  TIFFTAG_TIMECODE = 51043,
+  TIFFTAG_FPS = 51044,
 
   // OpCode List tags
   TIFFTAG_OPCODE_LIST1 = 0xc740,
@@ -226,6 +233,11 @@ class DNGImage {
   bool SetXResolution(double value);
   bool SetYResolution(double value);
   bool SetResolutionUnit(const unsigned short value);
+
+  bool SetFrameRate(double value);
+  bool SetTimeCode(unsigned char timecode[8]);
+  bool SetExposureTime(double exposureSecs);
+  bool SetIso(unsigned short iso);
 
   ///
   /// Set arbitrary string for image description.
@@ -1758,6 +1770,81 @@ bool DNGImage::SetResolutionUnit(const unsigned short value) {
   bool ret = WriteTIFFTag(
       static_cast<unsigned short>(TIFFTAG_RESOLUTION_UNIT), TIFF_SHORT, count,
       reinterpret_cast<const unsigned char *>(&data), &ifd_tags_, &data_os_);
+
+  if (!ret) {
+    return false;
+  }
+
+  num_fields_++;
+  return true;
+}
+
+bool DNGImage::SetFrameRate(double value) {
+  double numerator, denominator;
+  if (DoubleToRational(value, &numerator, &denominator) != 0) {
+    // Couldn't represent fp value as integer rational value.
+    return false;
+  }
+
+  unsigned int data[2];
+  data[0] = static_cast<unsigned int>(numerator);
+  data[1] = static_cast<unsigned int>(denominator);
+
+  bool ret = WriteTIFFTag(
+     static_cast<unsigned short>(TIFFTAG_FPS), TIFF_RATIONAL, 1,
+      reinterpret_cast<const unsigned char *>(data), &ifd_tags_, &data_os_);
+
+  if (!ret) {
+    return false;
+  }
+
+  num_fields_++;
+  return true;
+}
+
+bool DNGImage::SetTimeCode(unsigned char timecode[8]) {
+  bool ret = WriteTIFFTag(
+      static_cast<unsigned short>(TIFFTAG_TIMECODE), TIFF_BYTE, 8,
+      reinterpret_cast<const unsigned char *>(timecode),
+      &ifd_tags_, &data_os_);
+
+  if (!ret) {
+    return false;
+  }
+
+  num_fields_++;
+  return true;
+}
+
+bool DNGImage::SetExposureTime(double exposureSecs) {
+  double numerator, denominator;
+  if (DoubleToRational(exposureSecs, &numerator, &denominator) != 0) {
+    // Couldn't represent fp value as integer rational value.
+    return false;
+  }
+
+  unsigned int data[2];
+  data[0] = static_cast<unsigned int>(numerator);
+  data[1] = static_cast<unsigned int>(denominator);
+
+  bool ret = WriteTIFFTag(
+      static_cast<unsigned short>(TIFFTAG_CAMERA_EXPOSURE_TIME), TIFF_RATIONAL, 1,
+      reinterpret_cast<const unsigned char *>(data), &ifd_tags_, &data_os_);
+
+  if (!ret) {
+    return false;
+  }
+
+  num_fields_++;
+  return true;
+}
+
+bool DNGImage::SetIso(unsigned short iso) {
+  unsigned int count = 1;
+
+  bool ret = WriteTIFFTag(
+      static_cast<unsigned short>(TIFFTAG_CAMERA_ISO), TIFF_SHORT, count,
+      reinterpret_cast<const unsigned char *>(&iso), &ifd_tags_, &data_os_);
 
   if (!ret) {
     return false;
