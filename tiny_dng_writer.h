@@ -553,7 +553,7 @@ int frequencyScan(lje *self) {
   int maxval = (1 << self->bitdepth);
   while (pixcount--) {
     uint16_t p = *pixel;
-    if (self->delinearize) {
+    if (self->delinearize != NULL) {
       if (p >= self->delinearizeLength) {
         free(rowcache);
         return LJ92_ERROR_TOO_WIDE;
@@ -836,7 +836,7 @@ void writeBody(lje *self) {
   uint8_t nextbits = 8;
   while (pixcount--) {
     uint16_t p = *pixel;
-    if (self->delinearize) p = self->delinearize[p];
+    if (self->delinearize != NULL) p = self->delinearize[p];
     rows[1][col] = p;
 
     if ((row == 0) && (col == 0))
