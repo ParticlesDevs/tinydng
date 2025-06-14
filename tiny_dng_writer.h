@@ -43,6 +43,8 @@ typedef enum {
   TIFFTAG_COMPRESSION = 259,
   TIFFTAG_PHOTOMETRIC = 262,
   TIFFTAG_IMAGEDESCRIPTION = 270,
+  TIFFTAG_MAKE = 271,
+  TIFFTAG_MODEL = 272,
   TIFFTAG_STRIP_OFFSET = 273,
   TIFFTAG_SAMPLES_PER_PIXEL = 277,
   TIFFTAG_ROWS_PER_STRIP = 278,
@@ -55,6 +57,7 @@ typedef enum {
   TIFFTAG_RESOLUTION_UNIT = 296,
 
   TIFFTAG_SOFTWARE = 305,
+  TIFFTAG_DATETIME = 306,
 
   TIFFTAG_SAMPLEFORMAT = 339,
 
@@ -63,7 +66,14 @@ typedef enum {
   TIFFTAG_CFA_PATTERN = 33422,
 
   TIFFTAG_CAMERA_EXPOSURE_TIME = 33434,
+  TIFFTAG_FNUMBER = 33437,
   TIFFTAG_CAMERA_ISO = 34855,
+  TIFFTAG_FOCAL_LENGTH = 37386,
+
+  // EXIF tags
+  EXIFTAG_EXIFVERSION = 36864,
+  EXIFTAG_APERTUREVALUE = 37378,
+  EXIFTAG_EXPOSUREINDEX = 41493,
 
   TIFFTAG_DNG_VERSION = 50706,
   TIFFTAG_DNG_BACKWARD_VERSION = 50707,
@@ -82,8 +92,9 @@ typedef enum {
   TIFFTAG_CALIBRATION_ILLUMINANT1 = 50778,
   TIFFTAG_CALIBRATION_ILLUMINANT2 = 50779,
   TIFFTAG_EXTRA_CAMERA_PROFILES = 50933,
-  TIFFTAG_PROFILE_NAME = 50936,
   TIFFTAG_AS_SHOT_PROFILE_NAME = 50934,
+  TIFFTAG_NOISE_PROFILE = 51041,
+  TIFFTAG_PROFILE_NAME = 50936,
   TIFFTAG_DEFAULT_BLACK_RENDER = 51110,
   TIFFTAG_ACTIVE_AREA = 50829,
   TIFFTAG_FORWARD_MATRIX1 = 50964,
@@ -237,13 +248,30 @@ class DNGImage {
   bool SetFrameRate(double value);
   bool SetTimeCode(unsigned char timecode[8]);
   bool SetExposureTime(double exposureSecs);
+  bool SetFocalLength(double focalLengthMm);
+  bool SetAperture(double fNumber);
   bool SetIso(unsigned short iso);
+
+  /// Set EXIF version (e.g., "0230" for EXIF 2.3)
+  bool SetExifVersion(const std::string &version);
 
   ///
   /// Set arbitrary string for image description.
   /// Currently we limit to 1024*1024 chars at max.
   ///
   bool SetImageDescription(const std::string &ascii);
+
+  ///
+  /// Set camera manufacturer name.
+  /// Currently we limit to 1024*1024 chars at max.
+  ///
+  bool SetMake(const std::string &ascii);
+
+  ///
+  /// Set camera model name.
+  /// Currently we limit to 1024*1024 chars at max.
+  ///
+  bool SetModel(const std::string &ascii);
 
   ///
   /// Set arbitrary string for unique camera model name (not localized!).
@@ -256,6 +284,11 @@ class DNGImage {
   /// Currently we limit to 4095 chars at max.
   ///
   bool SetSoftware(const std::string &ascii);
+
+  ///
+  /// Set date and time (format: "YYYY:MM:DD HH:MM:SS").
+  ///
+  bool SetDateTime(const std::string &datetime);
 
   bool SetActiveArea(const unsigned int values[4]);
 
@@ -305,6 +338,10 @@ class DNGImage {
 
   /// Specify the the selected white balance at time of capture, encoded as x-y chromaticity coordinates.
   bool SetAsShotWhiteXY(const double x, const double y);
+
+  /// Specify noise profile as pairs of (scale, offset) values for each color plane.
+  /// noise_values should contain 2 * num_planes values: scale0, offset0, scale1, offset1, ...
+  bool SetNoiseProfile(const unsigned int num_planes, const double *noise_values);
 
   bool SetGainMap(std::vector<GainMap> &gain_maps);
 
@@ -1842,6 +1879,7 @@ bool DNGImage::SetExposureTime(double exposureSecs) {
 bool DNGImage::SetIso(unsigned short iso) {
   unsigned int count = 1;
 
+  // Write ISO Speed Ratings (TIFF 34855, same as EXIF ISOSpeedRatings)
   bool ret = WriteTIFFTag(
       static_cast<unsigned short>(TIFFTAG_CAMERA_ISO), TIFF_SHORT, count,
       reinterpret_cast<const unsigned char *>(&iso), &ifd_tags_, &data_os_);
@@ -1849,8 +1887,75 @@ bool DNGImage::SetIso(unsigned short iso) {
   if (!ret) {
     return false;
   }
+  num_fields_++;
+
+  return true;
+}
+
+bool DNGImage::SetExifVersion(const std::string &version) {
+  if (version.length() != 4) {
+    err_ += "EXIF version must be exactly 4 characters (e.g., \"0230\").\n";
+    return false;
+  }
+
+  bool ret = WriteTIFFTag(
+          static_cast<unsigned short>(EXIFTAG_EXIFVERSION), TIFF_UNDEFINED, 4,
+          reinterpret_cast<const unsigned char *>(version.c_str()), &ifd_tags_, &data_os_);
+
+  if (!ret) {
+    err_ += "Failed to write EXIF version tag.\n";
+    return false;
+  }
 
   num_fields_++;
+  return true;
+}
+
+bool DNGImage::SetFocalLength(double focalLengthMm) {
+  double numerator, denominator;
+  if (DoubleToRational(focalLengthMm, &numerator, &denominator) != 0) {
+    // Couldn't represent fp value as integer rational value.
+    return false;
+  }
+
+  unsigned int data[2];
+  data[0] = static_cast<unsigned int>(numerator);
+  data[1] = static_cast<unsigned int>(denominator);
+
+  // Write FocalLength tag (TIFF 37386, same as EXIF FocalLength)
+  bool ret = WriteTIFFTag(
+          static_cast<unsigned short>(TIFFTAG_FOCAL_LENGTH), TIFF_RATIONAL, 1,
+          reinterpret_cast<const unsigned char *>(data), &ifd_tags_, &data_os_);
+
+  if (!ret) {
+    return false;
+  }
+
+  num_fields_++;
+  return true;
+}
+
+bool DNGImage::SetAperture(double fNumber) {
+  double numerator, denominator;
+  if (DoubleToRational(fNumber, &numerator, &denominator) != 0) {
+    // Couldn't represent fp value as integer rational value.
+    return false;
+  }
+
+  unsigned int data[2];
+  data[0] = static_cast<unsigned int>(numerator);
+  data[1] = static_cast<unsigned int>(denominator);
+
+  // Write F-Number tag
+  bool ret = WriteTIFFTag(
+          static_cast<unsigned short>(TIFFTAG_FNUMBER), TIFF_RATIONAL, 1,
+          reinterpret_cast<const unsigned char *>(data), &ifd_tags_, &data_os_);
+
+  if (!ret) {
+    return false;
+  }
+  num_fields_++;
+
   return true;
 }
 
@@ -1874,6 +1979,66 @@ bool DNGImage::SetImageDescription(const std::string &ascii) {
                           &ifd_tags_, &data_os_);
 
   if (!ret) {
+    return false;
+  }
+
+  num_fields_++;
+  return true;
+}
+
+bool DNGImage::SetMake(const std::string &ascii) {
+  unsigned int count =
+          static_cast<unsigned int>(ascii.length() + 1);  // +1 for '\0'
+
+  if (count < 2) {
+    // empty string
+    err_ += "Make string cannot be empty.\n";
+    return false;
+  }
+
+  if (count > (1024 * 1024)) {
+    // too large
+    err_ += "Make string is too large.\n";
+    return false;
+  }
+
+  bool ret = WriteTIFFTag(static_cast<unsigned short>(TIFFTAG_MAKE),
+                          TIFF_ASCII, count,
+                          reinterpret_cast<const unsigned char *>(ascii.data()),
+                          &ifd_tags_, &data_os_);
+
+  if (!ret) {
+    err_ += "Failed to write Make tag.\n";
+    return false;
+  }
+
+  num_fields_++;
+  return true;
+}
+
+bool DNGImage::SetModel(const std::string &ascii) {
+  unsigned int count =
+          static_cast<unsigned int>(ascii.length() + 1);  // +1 for '\0'
+
+  if (count < 2) {
+    // empty string
+    err_ += "Model string cannot be empty.\n";
+    return false;
+  }
+
+  if (count > (1024 * 1024)) {
+    // too large
+    err_ += "Model string is too large.\n";
+    return false;
+  }
+
+  bool ret = WriteTIFFTag(static_cast<unsigned short>(TIFFTAG_MODEL),
+                          TIFF_ASCII, count,
+                          reinterpret_cast<const unsigned char *>(ascii.data()),
+                          &ifd_tags_, &data_os_);
+
+  if (!ret) {
+    err_ += "Failed to write Model tag.\n";
     return false;
   }
 
@@ -1928,6 +2093,43 @@ bool DNGImage::SetSoftware(const std::string &ascii) {
                           &ifd_tags_, &data_os_);
 
   if (!ret) {
+    return false;
+  }
+
+  num_fields_++;
+  return true;
+}
+
+bool DNGImage::SetDateTime(const std::string &datetime) {
+  unsigned int count =
+          static_cast<unsigned int>(datetime.length() + 1);  // +1 for '\0'
+
+  if (count < 2) {
+    // empty string
+    err_ += "DateTime string cannot be empty.\n";
+    return false;
+  }
+
+  // Standard TIFF DateTime format is "YYYY:MM:DD HH:MM:SS" (19 characters + null terminator = 20)
+  if (datetime.length() != 19) {
+    err_ += "DateTime must be in format \"YYYY:MM:DD HH:MM:SS\" (19 characters).\n";
+    return false;
+  }
+
+  // Basic format validation
+  if (datetime[4] != ':' || datetime[7] != ':' || datetime[10] != ' ' ||
+    datetime[13] != ':' || datetime[16] != ':') {
+    err_ += "DateTime format invalid. Expected \"YYYY:MM:DD HH:MM:SS\".\n";
+    return false;
+  }
+
+  bool ret = WriteTIFFTag(static_cast<unsigned short>(TIFFTAG_DATETIME),
+                          TIFF_ASCII, count,
+                          reinterpret_cast<const unsigned char *>(datetime.data()),
+                          &ifd_tags_, &data_os_);
+
+  if (!ret) {
+    err_ += "Failed to write DateTime tag.\n";
     return false;
   }
 
@@ -2281,6 +2483,29 @@ bool DNGImage::SetAsShotWhiteXY(const double x, const double y) {
                           &ifd_tags_, &data_os_);
 
   if (!ret) {
+    return false;
+  }
+
+  num_fields_++;
+  return true;
+}
+
+bool DNGImage::SetNoiseProfile(const unsigned int num_planes, const double *noise_values) {
+  if (num_planes == 0 || noise_values == NULL) {
+    err_ += "Invalid parameters for SetNoiseProfile().\n";
+    return false;
+  }
+
+  // Noise profile contains 2 values (scale, offset) per color plane
+  const unsigned int total_values = num_planes * 2;
+
+  bool ret = WriteTIFFTag(static_cast<unsigned short>(TIFFTAG_NOISE_PROFILE),
+                          TIFF_DOUBLE, total_values,
+                          reinterpret_cast<const unsigned char *>(noise_values),
+                          &ifd_tags_, &data_os_);
+
+  if (!ret) {
+    err_ += "Failed to write noise profile tag.\n";
     return false;
   }
 
