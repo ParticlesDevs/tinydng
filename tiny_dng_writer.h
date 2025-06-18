@@ -643,9 +643,9 @@ int frequencyScan(lje *self) {
 }
 
 void createEncodeTable(lje *self) {
-  float freq[18];
-  int codesize[18];
-  int others[18];
+  float freq[17];
+  int codesize[17];
+  int others[17];
 
   // Calculate frequencies
   float totalpixels = self->width * self->height;
@@ -657,9 +657,6 @@ void createEncodeTable(lje *self) {
     codesize[i] = 0;
     others[i] = -1;
   }
-  codesize[17] = 0;
-  others[17] = -1;
-  freq[17] = 1.0f;
 
   float v1f, v2f;
   int v1, v2;
@@ -667,7 +664,7 @@ void createEncodeTable(lje *self) {
   while (1) {
     v1f = 3.0f;
     v1 = -1;
-    for (int i = 0; i < 18; i++) {
+    for (int i = 0; i < 17; i++) {
       if ((freq[i] <= v1f) && (freq[i] > 0.0f)) {
         v1f = freq[i];
         v1 = i;
@@ -678,7 +675,7 @@ void createEncodeTable(lje *self) {
 #endif
     v2f = 3.0f;
     v2 = -1;
-    for (int i = 0; i < 18; i++) {
+    for (int i = 0; i < 17; i++) {
       if (i == v1) continue;
       if ((freq[i] < v2f) && (freq[i] > 0.0f)) {
         v2f = freq[i];
@@ -704,7 +701,7 @@ void createEncodeTable(lje *self) {
   }
   int *bits = self->bits;
   memset(bits, 0, sizeof(self->bits));
-  for (int i = 0; i < 18; i++) {
+  for (int i = 0; i < 17; i++) {
     if (codesize[i] != 0) {
       bits[codesize[i]]++;
     }
